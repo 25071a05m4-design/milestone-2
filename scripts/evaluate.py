@@ -2,175 +2,162 @@ import argparse
 import math
 from pathlib import Path
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--size", choices=["limit-small", "limit"], default="limit-small")
-parser.add_argument("--run", required=True)
-args = parser.parse_args()
 
-root = Path(__file__).resolve().parents[1]
+def load_qrels(path):
+    qrels = {}
 
-# ============================================================
-# Load qrels
-# Format:
-# query_id 0 document_id relevance
-#
-# Document IDs may contain spaces.
-# ============================================================
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
 
-qrels_path = root / "work" / args.size / "qrels.txt"
+            parts = line.strip().split()
 
-qrels = {}
+            # Format:
+            # query_id  0  document_id_with_spaces  relevance
+            qid = parts[0]
+            relevance = int(parts[-1])
+            docid = " ".join(parts[2:-1])
 
-with open(qrels_path, "r", encoding="utf-8") as f:
-    for line in f:
-        line = line.strip()
+            if relevance > 0:
+                qrels.setdefault(qid, set()).add(docid)
 
-        if not line:
-            continue
-
-        parts = line.split()
-
-        query_id = parts[0]
-        relevance = int(parts[-1])
-
-        # Everything between "0" and relevance is the document ID
-        doc_id = " ".join(parts[2:-1])
-
-        if query_id not in qrels:
-            qrels[query_id] = {}
-
-        qrels[query_id][doc_id] = relevance
+    return qrels
 
 
-# ============================================================
-# Load BM25 run
-#
-# Format:
-# query_id Q0 document_id rank score run_name
-#
-# Document IDs may contain spaces.
-# ============================================================
+def load_run(path):
+    runs = {}
 
-run_path = Path(args.run)
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
 
-run = {}
+            parts = line.strip().split()
 
-with open(run_path, "r", encoding="utf-8") as f:
-    for line in f:
-        line = line.strip()
+            # Format:
+            # query_id  Q0  document_id_with_spaces  rank  score  run_name
+            qid = parts[0]
+            rank = int(parts[-3])
+            score = float(parts[-2])
+            docid = " ".join(parts[2:-3])
 
-        if not line:
-            continue
+            runs.setdefault(qid, []).append(
+                (docid, rank, score)
+            )
 
-        parts = line.split()
+    for qid in runs:
+        runs[qid].sort(key=lambda x: x[1])
 
-        query_id = parts[0]
+    return runs
 
-        # The run format is:
-        # query_id Q0 doc_id rank score run_name
-        #
-        # rank is the second-last field
-        # score is the third-last field
-        #
-        # Everything between Q0 and rank is the document ID.
-
-        rank = int(parts[-3])
-        score = float(parts[-2])
-
-        doc_id = " ".join(parts[2:-3])
-
-        if query_id not in run:
-            run[query_id] = []
-
-        run[query_id].append((doc_id, score, rank))
-
-
-# ============================================================
-# Sort retrieved documents by score
-# ============================================================
-
-for query_id in run:
-    run[query_id].sort(
-        key=lambda x: x[1],
-        reverse=True
-    )
-
-
-# ============================================================
-# DCG
-# ============================================================
 
 def dcg(relevances):
+    total = 0.0
 
-    value = 0.0
+    for i, rel in enumerate(relevances, start=1):
+        total += (2 ** rel - 1) / math.log2(i + 1)
 
-    for rank, relevance in enumerate(relevances, start=1):
-        value += relevance / math.log2(rank + 1)
-
-    return value
-
-
-# ============================================================
-# NDCG@10
-# ============================================================
-
-def ndcg_at_10(query_id):
-
-    retrieved = run.get(query_id, [])
-
-    retrieved_top10 = retrieved[:10]
-
-    actual_relevances = []
-
-    for doc_id, score, rank in retrieved_top10:
-
-        relevance = qrels.get(query_id, {}).get(doc_id, 0)
-
-        actual_relevances.append(relevance)
-
-    actual_dcg = dcg(actual_relevances)
-
-    # Ideal ranking
-    ideal_relevances = sorted(
-        qrels.get(query_id, {}).values(),
-        reverse=True
-    )[:10]
-
-    ideal_dcg = dcg(ideal_relevances)
-
-    if ideal_dcg == 0:
-        return 0.0
-
-    return actual_dcg / ideal_dcg
+    return total
 
 
-# ============================================================
-# Calculate mean NDCG@10
-# ============================================================
+def ndcg_at_k(qrels, run, k):
+    scores = []
 
-all_queries = sorted(qrels.keys())
+    for qid, relevant_docs in qrels.items():
 
-scores = []
+        retrieved = run.get(qid, [])[:k]
 
-for query_id in all_queries:
-    scores.append(ndcg_at_10(query_id))
+        relevances = [
+            1 if docid in relevant_docs else 0
+            for docid, _, _ in retrieved
+        ]
 
-mean_ndcg = (
-    sum(scores) / len(scores)
-    if scores
-    else 0.0
-)
+        actual_dcg = dcg(relevances)
+
+        ideal_relevances = [
+            1
+        ] * min(len(relevant_docs), k)
+
+        ideal_dcg = dcg(ideal_relevances)
+
+        if ideal_dcg > 0:
+            scores.append(actual_dcg / ideal_dcg)
+
+    return sum(scores) / len(scores)
 
 
-# ============================================================
-# Print result
-# ============================================================
+def recall_at_k(qrels, run, k):
+    scores = []
 
-print()
-print("=" * 50)
-print("LIMIT BASELINE EVALUATION")
-print("=" * 50)
-print(f"Dataset : {args.size}")
-print(f"Queries : {len(all_queries)}")
-print(f"NDCG@10 : {mean_ndcg:.6f}")
-print("=" * 50)
+    for qid, relevant_docs in qrels.items():
+
+        retrieved = run.get(qid, [])[:k]
+
+        retrieved_docs = {
+            docid
+            for docid, _, _ in retrieved
+        }
+
+        found = len(
+            relevant_docs.intersection(retrieved_docs)
+        )
+
+        recall = found / len(relevant_docs)
+
+        scores.append(recall)
+
+    return sum(scores) / len(scores)
+
+
+def main():
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--size",
+        choices=["limit-small", "limit"],
+        required=True
+    )
+
+    parser.add_argument(
+        "--run",
+        required=True
+    )
+
+    args = parser.parse_args()
+
+    base_dir = Path(__file__).resolve().parent.parent
+
+    qrels_path = (
+        base_dir
+        / "work"
+        / args.size
+        / "qrels.txt"
+    )
+
+    run_path = Path(args.run)
+
+    if not run_path.is_absolute():
+        run_path = base_dir / run_path
+
+    qrels = load_qrels(qrels_path)
+    run = load_run(run_path)
+
+    ndcg10 = ndcg_at_k(qrels, run, 10)
+    recall10 = recall_at_k(qrels, run, 10)
+    recall100 = recall_at_k(qrels, run, 100)
+
+    print("=" * 50)
+    print("LIMIT BASELINE EVALUATION")
+    print("=" * 50)
+    print(f"Dataset    : {args.size}")
+    print(f"Queries    : {len(qrels)}")
+    print(f"NDCG@10    : {ndcg10:.6f}")
+    print(f"Recall@10  : {recall10:.6f}")
+    print(f"Recall@100 : {recall100:.6f}")
+    print("=" * 50)
+
+
+if __name__ == "__main__":
+    main()
