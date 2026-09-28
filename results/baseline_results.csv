@@ -1,0 +1,11 @@
+dataset,method,representation,budget,ndcg@10,status
+limit-small,BM25,sparse lexical,1.0,,NOT_RUN
+limit-small,Contriever,single dense vector,1.0,,NOT_RUN
+limit-small,MedCPT,single dense vector,1.0,,NOT_RUN
+limit-small,ColBERT,multi-vector late interaction,1.0,,NOT_RUN
+limit-small,SPLADE,sparse vocabulary vector,1.0,,NOT_RUN
+limit,BM25,sparse lexical,1.0,,NOT_RUN
+limit,Contriever,single dense vector,1.0,,NOT_RUN
+limit,MedCPT,single dense vector,1.0,,NOT_RUN
+limit,ColBERT,multi-vector late interaction,1.0,,NOT_RUN
+limit,SPLADE,sparse vocabulary vector,1.0,,NOT_RUN
