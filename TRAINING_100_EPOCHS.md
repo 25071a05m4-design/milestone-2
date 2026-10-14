@@ -2,19 +2,16 @@
 
 ## What has changed
 
-A new script, `scripts/train_neural_retriever.py`, adds a real gradient-based fine-tuning loop for:
-- Contriever (shared query/document encoder)
-- MedCPT (separate query and article encoders)
-- SPLADE (masked-language-model sparse representations with a sparsity penalty)
+A new script, `scripts/train_neural_retriever.py`, adds a gradient-based fine-tuning loop for Contriever and MedCPT. SPLADE now has a dedicated pairwise ranking trainer, `scripts/train_splade.py`, so its sparse-specific loss and token masking are explicit.
 
-Each run defaults to **100 epochs**, logs train and validation loss, saves `best` and `last` checkpoints, records a JSON training history, and stores query split membership.
+Both training scripts default to **100 epochs**. They log training/validation losses and save best/last checkpoints and JSON histories. The SPLADE trainer uses a positive-versus-negative pairwise ranking loss and a sparsity regularizer; its negative sampler excludes all known positive documents for each query.
 
 Examples:
 
 ```bash
 python scripts/train_neural_retriever.py --model contriever --size limit-small --epochs 100
 python scripts/train_neural_retriever.py --model medcpt --size limit-small --epochs 100
-python scripts/train_neural_retriever.py --model splade --size limit-small --epochs 100
+python scripts/train_splade.py --size limit-small --epochs 100 --batch-size 2
 ```
 
 The expected input layout is `data/<size>/queries.jsonl`, `corpus.jsonl`, and `qrels.jsonl`. The qrels JSONL rows need `query-id`, `corpus-id`, and `score`; only positive judgments are used as positive pairs. The script expects IDs to match the corresponding JSONL `_id` values.
@@ -33,4 +30,4 @@ The existing `run_colbert_baseline.py` performs inference/ranking, not training.
 
 ## Reproducibility
 
-Set `--seed` for deterministic split/shuffle initialization. The script saves `query_splits.json` and `training_history.json` under `checkpoints/<model>/<size>/`. Full reproducibility can still vary by GPU, CUDA kernels, package versions, and model revision. Inspect the validation-loss curve and verify checkpoint loading before using the trained weights in evaluation.
+Set `--seed` for deterministic split/shuffle initialization. The scripts save `query_splits.json` and `training_history.json` under `checkpoints/<model>/<size>/`. SPLADE's default output is `checkpoints/splade/<size>/`. Full reproducibility can still vary by GPU, CUDA kernels, package versions, and model revision. Inspect the validation-loss curve and verify checkpoint loading before using the trained weights in evaluation.
